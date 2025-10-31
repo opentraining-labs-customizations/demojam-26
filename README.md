@@ -39,13 +39,7 @@ Ensure you have the following three files in your repository directory:
 
 ### 3\. Install Dependencies
 
-You only need `Flask`:
-
-```bash
-pip install Flask
-```
-
-*(If you want to create a `requirements.txt` file, it should just contain the line: `Flask`)*
+-> The `requirements.txt` file has dependencies. 
 
 ### 4\. Run the Application
 
@@ -86,22 +80,3 @@ This file is a single HTML page that:
   * Renders the interactive graph and displays the **Nested JSON**, **Markdown List**, and **Top 20 Tasks**.
 
 -----
-
-## 🎨 Visualization Settings
-
-The visualization is configured for clarity and stability, preventing the "bouncy" effect and node overlap:
-
-```javascript
-const options = {
-  layout: {
-    hierarchical: {
-      enabled: true,    // Forces a stable, tree-like structure
-      direction: 'UD', 
-      sortMethod: 'directed'
-    }
-  },
-  physics: { enabled: false }, // Eliminates bouncing upon expansion
-  nodes: { shape: 'box', margin: 8 },
-  // ...
-};
-```
