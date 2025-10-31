@@ -1,0 +1,46 @@
+// ... (existing constants) ...
+const topTasksList = document.getElementById('topTasksList'); // Ensure this element is defined
+
+// Remove the `analyzeTopTasks` function entirely
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const file = fileInput.files[0];
+  if (!file) return alert('Please pick a JSON or text file first');
+
+  const fd = new FormData();
+  fd.append('file', file);
+
+  const resp = await fetch('/upload', { method: 'POST', body: fd });
+  if (!resp.ok) {
+    const txt = await resp.text();
+    return alert('Upload failed: ' + txt);
+  }
+
+  const json = await resp.json();
+  nestedJson = json.nested_json;
+
+  // show JSON and Markdown
+  jsonOut.value = JSON.stringify(nestedJson, null, 2);
+  mdOut.value = json.markdown;
+
+  // Initialize network (existing code...)
+  // ...
+
+  // 🎯 NEW LOGIC: Render the Top Tasks List directly from the response
+  const topTasks = json.top_20_time_consuming_tasks;
+  let html = '';
+  if (topTasks && topTasks.length > 0) {
+      topTasks.forEach(task => {
+          // Format duration to two decimal places
+          const duration = task.duration_seconds.toFixed(2); 
+          html += `<li><strong>${task.task}</strong> (${duration}s) in ${task.play}</li>`;
+      });
+  } else {
+      html = '<li>No duration data found to analyze top tasks. (Requires JSON-like output with duration fields).</li>';
+  }
+  topTasksList.innerHTML = html;
+  
+  // click nodes to expand/collapse (existing code...)
+  // ...
+});

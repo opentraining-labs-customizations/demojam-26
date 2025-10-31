@@ -1,0 +1,162 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Ansible Mind Map Viewer</title>
+  <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, Roboto, 'Segoe UI', Arial; margin: 12px; }
+    #mynetwork { width: 100%; height: 520px; border: 1px solid #ddd; }
+    #panels { display:flex; gap: 12px; width:100%; margin-top:10px; }
+    textarea { width:100%; height: 360px; font-family: monospace; }
+    .col { flex:1; }
+  </style>
+</head>
+<body>
+  <h2>Ansible Playbook Mind Map Viewer</h2>
+  <p>Upload a JSON or text file of Ansible playbook output. Click nodes to expand/collapse details.</p>
+
+  <form id="uploadForm">
+    <input type="file" id="fileInput" name="file" accept=".json,.txt" />
+    <button type="submit">Upload & Generate</button>
+  </form>
+
+  <div id="mynetwork"></div>
+
+  <div id="panels">
+    <div class="col">
+      <h3>Nested JSON</h3>
+      <textarea id="jsonOut" readonly></textarea>
+    </div>
+    <div class="col">
+      <h3>Markdown List</h3>
+      <textarea id="mdOut" readonly></textarea>
+    </div>
+    
+    <div class="col">
+     <h3>Top 20 Time-Consuming Tasks</h3>
+     <ul id="topTasksList" style="list-style-type: decimal; padding-left: 20px;">
+       <li>Upload output to analyze.</li>
+     </ul>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('uploadForm');
+    const fileInput = document.getElementById('fileInput');
+    const jsonOut = document.getElementById('jsonOut');
+    const mdOut = document.getElementById('mdOut');
+
+    let network = null;
+    let nestedJson = null;
+    let nodes = null;
+    let edges = null;
+    const displayedNodes = new Set(); // nodes currently displayed
+    const expandedNodes = new Set();  // nodes currently expanded
+
+    // recursive search in nestedJson
+    function findNodeInNested(node, id) {
+      if (node.id === id) return node;
+      for (const child of node.children || []) {
+        const found = findNodeInNested(child, id);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    // toggle expand/collapse for a node
+    function toggleChildren(nodeId) {
+      const node = findNodeInNested(nestedJson, nodeId);
+      if (!node || !node.children) return;
+
+      if (expandedNodes.has(nodeId)) {
+        // Collapse
+        node.children.forEach(child => removeNodeRecursive(child.id));
+        expandedNodes.delete(nodeId);
+      } else {
+        // Expand
+        node.children.forEach(child => {
+          if (!displayedNodes.has(child.id)) {
+            nodes.add({id: child.id, label: child.label, title: child.title || ''});
+            edges.add({from: nodeId, to: child.id});
+            displayedNodes.add(child.id);
+          }
+        });
+        expandedNodes.add(nodeId);
+      }
+    }
+
+    // recursively remove a node and its descendants
+    function removeNodeRecursive(nodeId) {
+      const node = findNodeInNested(nestedJson, nodeId);
+      if (!node) return;
+
+      if (node.children) {
+        node.children.forEach(child => removeNodeRecursive(child.id));
+      }
+
+      if (displayedNodes.has(nodeId)) {
+        nodes.remove(nodeId);
+        displayedNodes.delete(nodeId);
+      }
+
+      // remove edges connected to this node
+      edges.forEach(edge => {
+        if (edge.from === nodeId || edge.to === nodeId) edges.remove(edge.id);
+      });
+
+      // also remove from expandedNodes if it was expanded
+      if (expandedNodes.has(nodeId)) expandedNodes.delete(nodeId);
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const file = fileInput.files[0];
+      if (!file) return alert('Please pick a JSON or text file first');
+
+      const fd = new FormData();
+      fd.append('file', file);
+
+      const resp = await fetch('/upload', { method: 'POST', body: fd });
+      if (!resp.ok) {
+        const txt = await resp.text();
+        return alert('Upload failed: ' + txt);
+      }
+
+      const json = await resp.json();
+      nestedJson = json.nested_json;
+
+      // show JSON and Markdown
+      jsonOut.value = JSON.stringify(nestedJson, null, 2);
+      mdOut.value = json.markdown;
+
+      // initialize network with root node only
+      nodes = new vis.DataSet([{id: nestedJson.id, label: nestedJson.label, title: nestedJson.title}]);
+      edges = new vis.DataSet([]);
+      displayedNodes.clear();
+      expandedNodes.clear();
+      displayedNodes.add(nestedJson.id);
+
+      const container = document.getElementById('mynetwork');
+      const data = { nodes, edges };
+      const options = {
+        layout: { hierarchical: false },
+        nodes: { shape: 'box', margin: 8 },
+        physics: { stabilization: true },
+        interaction: { hover: true }
+      };
+
+      if (network) network.destroy();
+      network = new vis.Network(container, data, options);
+
+      // click nodes to expand/collapse
+      network.on("click", function (params) {
+        if (params.nodes.length > 0) {
+          const id = params.nodes[0];
+          toggleChildren(id);
+        }
+      });
+    });
+  </script>
+</body>
+</html>
