@@ -32,7 +32,6 @@
       <h3>Markdown List</h3>
       <textarea id="mdOut" readonly></textarea>
     </div>
-    
     <div class="col">
      <h3>Top 20 Time-Consuming Tasks</h3>
      <ul id="topTasksList" style="list-style-type: decimal; padding-left: 20px;">
@@ -46,15 +45,15 @@
     const fileInput = document.getElementById('fileInput');
     const jsonOut = document.getElementById('jsonOut');
     const mdOut = document.getElementById('mdOut');
+    const topTasksList = document.getElementById('topTasksList');
 
     let network = null;
     let nestedJson = null;
     let nodes = null;
     let edges = null;
-    const displayedNodes = new Set(); // nodes currently displayed
-    const expandedNodes = new Set();  // nodes currently expanded
+    const displayedNodes = new Set();
+    const expandedNodes = new Set();
 
-    // recursive search in nestedJson
     function findNodeInNested(node, id) {
       if (node.id === id) return node;
       for (const child of node.children || []) {
@@ -64,17 +63,14 @@
       return null;
     }
 
-    // toggle expand/collapse for a node
     function toggleChildren(nodeId) {
       const node = findNodeInNested(nestedJson, nodeId);
       if (!node || !node.children) return;
 
       if (expandedNodes.has(nodeId)) {
-        // Collapse
         node.children.forEach(child => removeNodeRecursive(child.id));
         expandedNodes.delete(nodeId);
       } else {
-        // Expand
         node.children.forEach(child => {
           if (!displayedNodes.has(child.id)) {
             nodes.add({id: child.id, label: child.label, title: child.title || ''});
@@ -86,26 +82,17 @@
       }
     }
 
-    // recursively remove a node and its descendants
     function removeNodeRecursive(nodeId) {
       const node = findNodeInNested(nestedJson, nodeId);
       if (!node) return;
-
-      if (node.children) {
-        node.children.forEach(child => removeNodeRecursive(child.id));
-      }
-
+      if (node.children) node.children.forEach(child => removeNodeRecursive(child.id));
       if (displayedNodes.has(nodeId)) {
         nodes.remove(nodeId);
         displayedNodes.delete(nodeId);
       }
-
-      // remove edges connected to this node
       edges.forEach(edge => {
         if (edge.from === nodeId || edge.to === nodeId) edges.remove(edge.id);
       });
-
-      // also remove from expandedNodes if it was expanded
       if (expandedNodes.has(nodeId)) expandedNodes.delete(nodeId);
     }
 
@@ -117,7 +104,7 @@
       const fd = new FormData();
       fd.append('file', file);
 
-      const resp = await fetch('/upload', { method: 'POST', body: fd });
+      const resp = await fetch('/top_tasks_analysis', { method: 'POST', body: fd });
       if (!resp.ok) {
         const txt = await resp.text();
         return alert('Upload failed: ' + txt);
@@ -126,11 +113,22 @@
       const json = await resp.json();
       nestedJson = json.nested_json;
 
-      // show JSON and Markdown
       jsonOut.value = JSON.stringify(nestedJson, null, 2);
       mdOut.value = json.markdown;
 
-      // initialize network with root node only
+      // ✅ Populate Top 20 list
+      topTasksList.innerHTML = '';
+      if (json.top_20_time_consuming_tasks && json.top_20_time_consuming_tasks.length > 0) {
+        json.top_20_time_consuming_tasks.forEach((t) => {
+          const li = document.createElement('li');
+          li.textContent = `${t.play} → ${t.task} (${t.duration_seconds.toFixed(2)}s)`;
+          topTasksList.appendChild(li);
+        });
+      } else {
+        topTasksList.innerHTML = '<li>No duration data found in this log.</li>';
+      }
+
+      // Initialize mindmap
       nodes = new vis.DataSet([{id: nestedJson.id, label: nestedJson.label, title: nestedJson.title}]);
       edges = new vis.DataSet([]);
       displayedNodes.clear();
@@ -148,13 +146,8 @@
 
       if (network) network.destroy();
       network = new vis.Network(container, data, options);
-
-      // click nodes to expand/collapse
       network.on("click", function (params) {
-        if (params.nodes.length > 0) {
-          const id = params.nodes[0];
-          toggleChildren(id);
-        }
+        if (params.nodes.length > 0) toggleChildren(params.nodes[0]);
       });
     });
   </script>

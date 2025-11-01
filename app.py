@@ -4,32 +4,22 @@ import re
 import uuid
 import html
 from pathlib import Path
+from datetime import timedelta
 
 app = Flask(__name__)
 
 # Utility: clean labels to remove *, [, ], and extra whitespace
 def clean_label(label):
-    """
-    Remove unwanted characters like *, [, ] from a label
-    and strip extra whitespace.
-    """
-    import re
     if not label:
         return ""
-    cleaned = re.sub(r'[\*\[\]]', '', str(label))  # remove *, [, ]
-    cleaned = re.sub(r'\s+', ' ', cleaned)         # replace multiple spaces with one
+    cleaned = re.sub(r'[\*\[\]]', '', str(label))
+    cleaned = re.sub(r'\s+', ' ', cleaned)
     return cleaned.strip()
 
-# Utility: generate stable ids for nodes
 def nid():
     return str(uuid.uuid4())
 
-# Convert typical Ansible playbook JSON structure to nodes + edges and nested JSON/markdown
 def build_mindmap_from_ansible(ansible_json):
-    """
-    Build hierarchical structure from Ansible playbook JSON or text output.
-    Ensures one "Tasks" node per play, with ordered tasks underneath.
-    """
     root_id = nid()
     nodes = [{"id": root_id, "label": "Playbook Output", "title": "Root: Playbook Output"}]
     edges = []
@@ -54,21 +44,18 @@ def build_mindmap_from_ansible(ansible_json):
         "ignored": "Failure ignored via 'ignore_errors'"
     }
 
-    # ✅ Add plays
     plays = ansible_json.get("plays", [])
     if isinstance(plays, list) and plays:
         plays_parent = add_node("Plays", parent=root_id, group="plays")
-       
+
         for play_index, play in enumerate(plays, 1):
-           play_name = clean_label(play.get("name") or play.get("play", {}).get("name") or f"Play {play_index}")
-           play_id = add_node(play_name, parent=plays_parent, group="play")
-          
-           # ✅ Create one single "Tasks" node per play
-           tasks_parent = add_node("Tasks", parent=play_id, group="tasks")
-           tasks = play.get("tasks") or play.get("tasks_results") or play.get("tasks_list") or []
-           if isinstance(tasks, list) and tasks:
+            play_name = clean_label(play.get("name") or play.get("play", {}).get("name") or f"Play {play_index}")
+            play_id = add_node(play_name, parent=plays_parent, group="play")
+
+            tasks_parent = add_node("Tasks", parent=play_id, group="tasks")
+            tasks = play.get("tasks") or play.get("tasks_results") or play.get("tasks_list") or []
+            if isinstance(tasks, list) and tasks:
                 for task_index, task in enumerate(tasks, 1):
-                    # Task name cleanup
                     if isinstance(task, dict):
                         tname = task.get("name") or task.get("task", {}).get("name") or task.get("action") or f"Task {task_index}"
                     else:
@@ -77,7 +64,6 @@ def build_mindmap_from_ansible(ansible_json):
                     task_label = f"{task_index:02d}. {tname_clean}"
                     task_id = add_node(task_label, parent=tasks_parent, group="task")
 
-                    # ✅ Attach hosts if any
                     hosts = task.get("hosts") if isinstance(task, dict) else None
                     if hosts and isinstance(hosts, dict):
                         for host, result in hosts.items():
@@ -87,7 +73,6 @@ def build_mindmap_from_ansible(ansible_json):
                                     if isinstance(v, (str, int, float)):
                                         add_node(f"{k}: {v}", parent=host_node, group="status")
 
-    # ✅ Play Recap
     recap = ansible_json.get("stats") or ansible_json.get("playbook_recap") or {}
     if recap:
         recap_parent = add_node("Play Recap", parent=root_id, group="recap")
@@ -97,13 +82,11 @@ def build_mindmap_from_ansible(ansible_json):
                 for k, v in results.items():
                     add_node(f"{k}: {v}", parent=host_id, group="recap-item")
 
-    # ✅ Build nested JSON (for collapsible frontend)
     id_to_node = {n['id']: {**n, 'children': []} for n in nodes}
     for e in edges:
         id_to_node[e['from']]['children'].append(id_to_node[e['to']])
     nested_json = id_to_node[root_id]
 
-    # ✅ Markdown version
     def to_markdown(node, depth=0):
         indent = "  " * depth
         lines = [f"{indent}- {node['label']}"]
@@ -112,23 +95,11 @@ def build_mindmap_from_ansible(ansible_json):
         return lines
 
     markdown = "\n".join(to_markdown(nested_json))
+    return {"nodes": nodes, "edges": edges, "nested_json": nested_json, "markdown": markdown, "status_meanings": status_meanings}
 
-    return {
-        "nodes": nodes,
-        "edges": edges,
-        "nested_json": nested_json,
-        "markdown": markdown,
-        "status_meanings": status_meanings
-    }
 
 def get_top_time_consuming_tasks(ansible_json, top_n=20):
-    """
-    Extract top N time-consuming tasks from parsed Ansible playbook data.
-    Looks for task duration fields such as 'duration', 'duration_seconds', or 'duration::start/end'.
-    """
-
     task_durations = []
-
     plays = ansible_json.get("plays", [])
     for play_index, play in enumerate(plays, 1):
         play_name = play.get("name") or f"Play {play_index}"
@@ -137,43 +108,27 @@ def get_top_time_consuming_tasks(ansible_json, top_n=20):
         for task_index, task in enumerate(tasks, 1):
             if not isinstance(task, dict):
                 continue
-
             task_name = task.get("name") or f"Task {task_index}"
             duration = None
-
-            # 🔹 Look for common Ansible duration fields
             if "duration" in task and isinstance(task["duration"], (int, float)):
                 duration = float(task["duration"])
             elif "duration_seconds" in task:
                 duration = float(task["duration_seconds"])
             elif "duration" in task and isinstance(task["duration"], dict):
-                # e.g., {"start": "...", "end": "...", "elapsed": 3.21}
                 duration = float(task["duration"].get("elapsed", 0))
-
-            # If no duration recorded, skip
             if duration is None:
                 continue
+            task_durations.append({"play": play_name, "task": task_name, "duration_seconds": duration})
+    return sorted(task_durations, key=lambda x: x["duration_seconds"], reverse=True)[:top_n]
 
-            task_durations.append({
-                "play": play_name,
-                "task": task_name,
-                "duration_seconds": duration
-            })
-
-    # Sort tasks descending by duration
-    top_tasks = sorted(task_durations, key=lambda x: x["duration_seconds"], reverse=True)[:top_n]
-    return top_tasks
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
-@app.route('/upload', methods=['POST'])
-# ... (existing imports and functions) ...
 
-# 🎯 Define the new route for getting top tasks
 @app.route('/top_tasks_analysis', methods=['POST'])
-def upload():
+def top_tasks_analysis():
     file = request.files.get('file')
     if not file:
         return jsonify({"error": "no file uploaded"}), 400
@@ -183,68 +138,66 @@ def upload():
     except Exception as e:
         return jsonify({"error": "failed to read file", "message": str(e)}), 400
 
-    # Very basic parser for text Ansible output
+    play_pattern = re.compile(r"^PLAY \[(.+?)\]")
+    task_pattern = re.compile(r"^TASK \[(.+?)\]")
+    time_pattern = re.compile(r"\((\d+):(\d+):(\d+\.\d+)\)")
+
     plays = []
     current_play = None
+    current_task = None
+
     for line in raw.splitlines():
         line = line.strip()
-        if line.startswith("PLAY ["):
-            play_name = line[6:-1]
+        play_match = play_pattern.match(line)
+        if play_match:
+            play_name = play_match.group(1)
             current_play = {"name": play_name, "tasks": []}
             plays.append(current_play)
-        elif line.startswith("TASK [") and current_play:
-            task_name = line[6:-1]
-            current_play["tasks"].append({"name": task_name})
-        elif line.startswith("PLAY RECAP"):
+            continue
+
+        task_match = task_pattern.match(line)
+        if task_match and current_play:
+            task_name = task_match.group(1)
+            current_task = {"name": task_name}
+            current_play["tasks"].append(current_task)
+            continue
+
+        time_match = time_pattern.search(line)
+        if time_match and current_task:
+            h, m, s = map(float, time_match.groups())
+            duration = timedelta(hours=h, minutes=m, seconds=s).total_seconds()
+            current_task["duration_seconds"] = duration
+            current_task = None
+            continue
+
+        if line.startswith("PLAY RECAP"):
             break
- 
-    # Extract recap section
+
     recap = {}
     recap_started = False
     for line in raw.splitlines():
-      if line.startswith("PLAY RECAP"):
-          recap_started = True
-          continue
-     # 🎯 FIX: Only process lines that contain both a host and status metrics (e.g., ok=X)
-      if recap_started and line.strip():
-        parts = line.split()
-        
-        # Check if the line has enough parts to be a recap line (Host + at least one stat)
-        # And ensure at least one part contains an '=' sign (e.g., ok=13)
-        if len(parts) >= 2 and any('=' in part for part in parts[1:]):
-            host = parts[0]
-            rec = {}
-            for kv in parts[1:]:
-                if "=" in kv:
-                    k, v = kv.split("=")
-                    # Optionally convert v to int/string as needed, but for mindmap
-                    # visualization, keeping it as string is often simpler.
-                    rec[k] = v
-            
-            # Only add to recap if we actually parsed host stats
-            if rec:
-                recap[host] = rec
-        
-        # Stop parsing recap if we encounter a line that is clearly not a recap line
-        # This is a heuristic and depends on your specific output format, 
-        # but generally recap is the last block.
-        # A blank line or a line starting with something else (like "PLAY [...")
-        # usually marks the end.
-        elif len(parts) < 2: 
-             # If it's a blank line or a line that only contains a host with no stats, 
-             # stop parsing the recap block.
-             recap_started = False 
-    # Final parsed data structure
+        if line.startswith("PLAY RECAP"):
+            recap_started = True
+            continue
+        if recap_started and line.strip():
+            parts = line.split()
+            if len(parts) >= 2 and any('=' in part for part in parts[1:]):
+                host = parts[0]
+                rec = {}
+                for kv in parts[1:]:
+                    if "=" in kv:
+                        k, v = kv.split("=")
+                        rec[k] = v
+                if rec:
+                    recap[host] = rec
+            elif len(parts) < 2:
+                recap_started = False
+
     data = {"plays": plays, "stats": recap}
-    # 1. Build mindmap structure
     mind = build_mindmap_from_ansible(data)
-    # Run Top Tasks analysis directly using the parsed data
     top_tasks_list = get_top_time_consuming_tasks(data, top_n=20)
-    # Add the analysis results to the final JSON response
     mind["top_20_time_consuming_tasks"] = top_tasks_list
-    
-    # NOTE: You no longer need to include mind["original_ansible_data"] = data 
-    # since we are doing the analysis here.
+
     return jsonify(mind)
 
 
