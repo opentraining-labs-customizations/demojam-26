@@ -140,6 +140,10 @@ def get_failed_tasks_from_text(raw_log):
     for line in raw_log.splitlines():
         line = line.strip()
 
+        # Skip warnings
+        if re.search(r"\bwarning\b|\bwarn\b", line, re.IGNORECASE):
+            continue
+
         # Detect play
         play_match = play_pattern.match(line)
         if play_match:
@@ -165,6 +169,7 @@ def get_failed_tasks_from_text(raw_log):
             })
 
     return failed_tasks
+
 
 @app.route('/')
 def index():
