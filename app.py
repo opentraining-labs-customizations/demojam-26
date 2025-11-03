@@ -121,6 +121,50 @@ def get_top_time_consuming_tasks(ansible_json, top_n=20):
             task_durations.append({"play": play_name, "task": task_name, "duration_seconds": duration})
     return sorted(task_durations, key=lambda x: x["duration_seconds"], reverse=True)[:top_n]
 
+def get_failed_tasks_from_text(raw_log):
+    """
+    Parse Ansible text logs and return structured failed task details.
+    Example output:
+    [
+        {"play": "My Play", "task": "Setup EC2", "host": "localhost", "message": "Failed to connect..."}
+    ]
+    """
+    failed_tasks = []
+    play_name = None
+    task_name = None
+
+    play_pattern = re.compile(r"^PLAY \[(.+?)\]")
+    task_pattern = re.compile(r"^TASK \[(.+?)\]")
+    fail_pattern = re.compile(r"^(fatal|failed|unreachable): \[(.+?)\]: (.+)", re.IGNORECASE)
+
+    for line in raw_log.splitlines():
+        line = line.strip()
+
+        # Detect play
+        play_match = play_pattern.match(line)
+        if play_match:
+            play_name = play_match.group(1)
+            continue
+
+        # Detect task
+        task_match = task_pattern.match(line)
+        if task_match:
+            task_name = task_match.group(1)
+            continue
+
+        # Detect failure
+        fail_match = fail_pattern.match(line)
+        if fail_match:
+            _, host, msg = fail_match.groups()
+            msg = msg.replace('FAILED! =>', '').replace('=>', '').strip()
+            failed_tasks.append({
+                "play": play_name or "(unknown play)",
+                "task": task_name or "(unknown task)",
+                "host": host,
+                "message": msg or "(no message)"
+            })
+
+    return failed_tasks
 
 @app.route('/')
 def index():
@@ -197,7 +241,11 @@ def top_tasks_analysis():
     mind = build_mindmap_from_ansible(data)
     top_tasks_list = get_top_time_consuming_tasks(data, top_n=20)
     mind["top_20_time_consuming_tasks"] = top_tasks_list
-
+    
+    failed_tasks_list = get_failed_tasks_from_text(raw)
+    print(failed_tasks_list)
+    mind["failed_tasks"] = failed_tasks_list
+    
     return jsonify(mind)
 
 

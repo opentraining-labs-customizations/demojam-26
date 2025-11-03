@@ -10,6 +10,30 @@
     #panels { display:flex; gap: 12px; width:100%; margin-top:10px; }
     textarea { width:100%; height: 360px; font-family: monospace; }
     .col { flex:1; }
+
+    /* Chatbot styles */
+    #ai-chat-section {
+      margin-top: 20px;
+    }
+    #chat-container {
+      background: #f9f9f9;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 12px;
+      min-height: 80px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    #ai-response {
+      white-space: pre-wrap;
+      line-height: 1.4;
+      color: #222;
+      font-size: 0.95em;
+    }
+    #typing-indicator {
+      display: none;
+      font-style: italic;
+      color: #888;
+    }
   </style>
 </head>
 <body>
@@ -33,10 +57,21 @@
       <textarea id="mdOut" readonly></textarea>
     </div>
     <div class="col">
-     <h3>Top 20 Time-Consuming Tasks</h3>
-     <ul id="topTasksList" style="list-style-type: decimal; padding-left: 20px;">
-       <li>Upload output to analyze.</li>
-     </ul>
+      <h3>Top 20 Time-Consuming Tasks</h3>
+      <textarea id="topTasksOut" readonly>Upload output to analyze.</textarea>
+    </div>
+    <div class="col">
+      <h3>Failing Tasks</h3>
+      <textarea id="FailedTasks" readonly>Upload output to analyze.</textarea>
+    </div>
+  </div>
+
+  <!-- Chatbot Section -->
+  <div id="ai-chat-section">
+    <h3>💬 AI Insight</h3>
+    <div id="chat-container">
+      <div id="ai-response"></div>
+      <div id="typing-indicator">AI is thinking<span id="dots">.</span></div>
     </div>
   </div>
 
@@ -45,7 +80,7 @@
     const fileInput = document.getElementById('fileInput');
     const jsonOut = document.getElementById('jsonOut');
     const mdOut = document.getElementById('mdOut');
-    const topTasksList = document.getElementById('topTasksList');
+    const topTasksOut = document.getElementById('topTasksOut');
 
     let network = null;
     let nestedJson = null;
@@ -116,19 +151,32 @@
       jsonOut.value = JSON.stringify(nestedJson, null, 2);
       mdOut.value = json.markdown;
 
-      // ✅ Populate Top 20 list
-      topTasksList.innerHTML = '';
+      // Top 20 list into textarea
       if (json.top_20_time_consuming_tasks && json.top_20_time_consuming_tasks.length > 0) {
-        json.top_20_time_consuming_tasks.forEach((t) => {
-          const li = document.createElement('li');
-          li.textContent = `${t.play} → ${t.task} (${t.duration_seconds.toFixed(2)}s)`;
-          topTasksList.appendChild(li);
-        });
+        const lines = json.top_20_time_consuming_tasks.map(
+          (t, i) => `${i + 1}. ${t.play} → ${t.task} (${t.duration_seconds.toFixed(2)}s)`
+        );
+        topTasksOut.value = lines.join('\n');
+
+        // Failing Tasks
+        const failedOut = document.getElementById('FailedTasks');
+        if (json.failed_tasks && json.failed_tasks.length > 0) {
+          const lines = json.failed_tasks.map(
+            (t, i) =>
+              `${i + 1}. Play: ${t.play}\n` +
+              `   Task: ${t.task}\n` +
+              `   Host: ${t.host}\n` +
+              `   Message: ${t.message}`
+          );
+          failedOut.value = lines.join('\n\n');
+        } else {
+          failedOut.value = 'No failing tasks found.';
+        }
       } else {
-        topTasksList.innerHTML = '<li>No duration data found in this log.</li>';
+        topTasksOut.value = 'No duration data found in this log.';
       }
 
-      // Initialize mindmap
+      // Mind map setup
       nodes = new vis.DataSet([{id: nestedJson.id, label: nestedJson.label, title: nestedJson.title}]);
       edges = new vis.DataSet([]);
       displayedNodes.clear();
@@ -149,7 +197,54 @@
       network.on("click", function (params) {
         if (params.nodes.length > 0) toggleChildren(params.nodes[0]);
       });
+
+      // Generate AI-style insight
+      let insight = '';
+
+      if (json.failed_tasks && json.failed_tasks.length > 0) {
+        insight += `I noticed ${json.failed_tasks.length} task(s) failed. `;
+        const first = json.failed_tasks[0];
+        insight += `The first failure occurred in play "${first.play}" on host "${first.host}" due to "${first.message}". `;
+      }
+
+      if (json.top_20_time_consuming_tasks && json.top_20_time_consuming_tasks.length > 0) {
+        const longest = json.top_20_time_consuming_tasks[0];
+        insight += `Also, the task "${longest.task}" took the longest time (${longest.duration_seconds.toFixed(2)}s), which might indicate a bottleneck.`;
+      }
+
+      if (!insight)
+        insight = "Everything looks good — no failures or long-running tasks detected.";
+
+      showTypingEffect(insight);
     });
+
+    // Typing animation
+    function showTypingEffect(text) {
+      const aiResponse = document.getElementById('ai-response');
+      const typing = document.getElementById('typing-indicator');
+      aiResponse.textContent = '';
+      typing.style.display = 'block';
+
+      let i = 0;
+      const speed = 25; // ms per character
+
+      function typeChar() {
+        if (i < text.length) {
+          aiResponse.textContent += text.charAt(i);
+          i++;
+          setTimeout(typeChar, speed);
+        } else {
+          typing.style.display = 'none';
+        }
+      }
+      setTimeout(typeChar, 400);
+    }
+
+    // Animate dots (...)
+    setInterval(() => {
+      const dots = document.getElementById('dots');
+      if (dots) dots.textContent = dots.textContent.length < 3 ? dots.textContent + '.' : '.';
+    }, 400);
   </script>
 </body>
 </html>
